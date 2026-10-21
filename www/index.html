@@ -1,0 +1,315 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#55c7f5">
+<title>Sky Coin Bird</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;font-family:Arial,sans-serif;background:#73d5f5;text-align:center;overflow:hidden;touch-action:manipulation}
+#game{display:block;width:100vw;height:100dvh;max-width:600px;margin:auto;touch-action:manipulation}
+#hud{position:absolute;top:12px;left:0;width:100%;color:white;font-weight:bold;font-size:19px;text-shadow:2px 2px 3px #333;pointer-events:none}
+#menu{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:#0005}
+.panel{background:#fff9;padding:24px 20px;border-radius:22px;width:min(88%,350px);box-shadow:0 8px 25px #2465}
+h1{color:#ef7b16;margin:0 0 10px;font-size:34px}
+p{color:#17334a;font-weight:bold}
+button{border:0;border-radius:14px;padding:13px 20px;margin:5px;background:#ffb52e;color:#422300;font-weight:bold;font-size:17px;box-shadow:0 4px #c97915}
+button:active{transform:translateY(3px);box-shadow:0 1px #c97915}
+.small{font-size:14px;padding:9px 12px}
+#shop{display:none;position:absolute;inset:0;background:#0009;align-items:center;justify-content:center}
+#shop .panel{max-height:85dvh;overflow:auto}
+.skin{display:flex;align-items:center;justify-content:space-between;gap:5px;margin:8px 0;padding:8px;background:#ffffffb8;border-radius:12px}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="hud">⭐ <span id="score">0</span> &nbsp; 🪙 <span id="coins">0</span></div>
+
+<div id="menu">
+ <div class="panel">
+  <h1>🐤 Sky Coin Bird</h1>
+  <p id="message">Tap to fly! Avoid the pipes and collect coins.</p>
+  <p>🏆 Best: <span id="best">0</span></p>
+  <button id="play">▶ PLAY</button><br>
+  <button id="openShop" class="small">🛍️ Bird Shop</button>
+  <p style="font-size:12px">Made for bird-flying champions!</p>
+ </div>
+</div>
+
+<div id="shop">
+ <div class="panel">
+  <h1>🐤 Bird Shop</h1>
+  <p>Your coins: 🪙 <span id="shopCoins">0</span></p>
+  <div id="skins"></div>
+  <button id="closeShop">Back</button>
+ </div>
+</div>
+
+<script>
+(() => {
+"use strict";
+const canvas=document.getElementById("game");
+const ctx=canvas.getContext("2d");
+const $=id=>document.getElementById(id);
+
+let W=0,H=0,dpr=1;
+function resize(){
+ dpr=Math.min(window.devicePixelRatio||1,2);
+ W=window.innerWidth;H=window.innerHeight;
+ canvas.width=Math.round(W*dpr);
+ canvas.height=Math.round(H*dpr);
+ canvas.style.width=W+"px";canvas.style.height=H+"px";
+ ctx.setTransform(dpr,0,0,dpr,0,0);
+}
+window.addEventListener("resize",resize);resize();
+
+const birdColors=[
+ {name:"Yellow",color:"#ffcf32",price:0},
+ {name:"Blue",color:"#35a9ff",price:20},
+ {name:"Pink",color:"#ff6eaf",price:40},
+ {name:"Purple",color:"#a66bff",price:70},
+ {name:"Green",color:"#50db80",price:100},
+ {name:"Red",color:"#ff554e",price:150}
+];
+
+function load(key,fallback){
+ try {const x=localStorage.getItem(key);return x===null?fallback:JSON.parse(x)}
+ catch(e){return fallback}
+}
+let coins=load("scb_coins",0);
+let best=load("scb_best",0);
+let owned=load("scb_owned",[0]);
+let selected=load("scb_selected",0);
+let score=0,playing=false,over=false;
+let bird,pipes,particles,frame,lastTime=0;
+let audio=null;
+
+function save(){
+ try{
+ localStorage.setItem("scb_coins",JSON.stringify(coins));
+ localStorage.setItem("scb_best",JSON.stringify(best));
+ localStorage.setItem("scb_owned",JSON.stringify(owned));
+ localStorage.setItem("scb_selected",JSON.stringify(selected));
+ }catch(e){}
+}
+function sound(freq=500,duration=.08){
+ try{
+ const AC=window.AudioContext||window.webkitAudioContext;
+ if(!AC)return;
+ if(!audio)audio=new AC();
+ if(audio.state==="suspended")audio.resume();
+ const osc=audio.createOscillator(),gain=audio.createGain();
+ osc.type="sine";osc.frequency.value=freq;
+ gain.gain.setValueAtTime(.08,audio.currentTime);
+ gain.gain.exponentialRampToValueAtTime(.001,audio.currentTime+duration);
+ osc.connect(gain);gain.connect(audio.destination);
+ osc.start();osc.stop(audio.currentTime+duration);
+ }catch(e){}
+}
+function updateHud(){
+ $("score").textContent=score;
+ $("coins").textContent=coins;
+ $("best").textContent=best;
+}
+function reset(){
+ score=0;
+ bird={x:W*.27,y:H*.43,vy:0,r:16,angle:0};
+ pipes=[];particles=[];frame=0;
+ over=false;updateHud();
+}
+function start(){
+ $("menu").style.display="none";
+ $("shop").style.display="none";
+ reset();playing=true;lastTime=performance.now();
+ flap();sound(600);
+}
+function flap(){
+ if(!playing)return;
+ bird.vy=-H*.48;
+ sound(540,.06);
+}
+function endGame(){
+ if(!playing)return;
+ playing=false;over=true;
+ if(score>best)best=score;
+ save();updateHud();sound(130,.25);
+ $("message").textContent="Game over! Score: "+score;
+ $("play").textContent="↻ PLAY AGAIN";
+ $("menu").style.display="flex";
+}
+function openShop(){
+ playing=false;
+ renderShop();
+ $("menu").style.display="none";
+ $("shop").style.display="flex";
+}
+function renderShop(){
+ $("shopCoins").textContent=coins;
+ $("skins").innerHTML="";
+ birdColors.forEach((s,i)=>{
+ const row=document.createElement("div");row.className="skin";
+ const info=document.createElement("span");
+ info.textContent="● "+s.name;
+ info.style.color=s.color;info.style.fontWeight="bold";
+ const btn=document.createElement("button");btn.className="small";
+ if(selected===i)btn.textContent="Selected";
+ else if(owned.includes(i))btn.textContent="Use";
+ else btn.textContent="🪙 "+s.price;
+ btn.onclick=()=>{
+ if(owned.includes(i)){selected=i;save();renderShop();sound(650)}
+ else if(coins>=s.price){
+ coins-=s.price;owned.push(i);selected=i;save();
+ updateHud();renderShop();sound(800);
+ }else{btn.textContent="Need more coins!";sound(180)}
+ };
+ row.append(info,btn);$("skins").appendChild(row);
+ });
+}
+$("play").onclick=start;
+$("openShop").onclick=openShop;
+$("closeShop").onclick=()=>{
+ $("shop").style.display="none";
+ $("menu").style.display="flex";
+ updateHud();
+};
+canvas.addEventListener("pointerdown",e=>{
+ e.preventDefault();
+ if(playing)flap();
+ else if($("shop").style.display!=="flex")start();
+});
+window.addEventListener("keydown",e=>{
+ if(e.code==="Space"||e.code==="ArrowUp"){
+ e.preventDefault();
+ if(playing)flap();
+ else start();
+ }
+});
+
+function circle(x,y,r,color){
+ ctx.fillStyle=color;ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fill();
+}
+function drawBackground(){
+ const g=ctx.createLinearGradient(0,0,0,H);
+ g.addColorStop(0,"#51c5f4");g.addColorStop(1,"#d4f7ff");
+ ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+ // Sun
+ circle(W*.8,H*.14,32,"#fff2a6");
+ // Clouds
+ ctx.fillStyle="#ffffffc9";
+ for(let i=0;i<5;i++){
+ const x=((i*137-frame*.25)%(W+150)+W+150)%(W+150)-50;
+ const y=H*(.15+(i%3)*.12);
+ circle(x,y,20,"#ffffffc9");
+ circle(x+22,y-9,25,"#ffffffc9");
+ circle(x+45,y,18,"#ffffffc9");
+ }
+ ctx.fillStyle="#9be17a";
+ ctx.beginPath();ctx.moveTo(0,H*.82);
+ for(let x=0;x<=W;x+=30)ctx.lineTo(x,H*.79+Math.sin(x*.02+frame*.008)*15);
+ ctx.lineTo(W,H);ctx.lineTo(0,H);ctx.fill();
+ ctx.fillStyle="#65c956";ctx.fillRect(0,H-24,W,24);
+ ctx.fillStyle="#398e35";ctx.fillRect(0,H-24,W,5);
+}
+function drawBird(){
+ const c=birdColors[selected]||birdColors[0];
+ ctx.save();ctx.translate(bird.x,bird.y);
+ ctx.rotate(Math.max(-.45,Math.min(.8,bird.vy*.0015)));
+ // Wing
+ circle(-5,5,10,"#eaa72a");
+ // Body
+ circle(0,0,16,c.color);
+ // Eye
+ circle(7,-6,5,"white");circle(9,-6,2.3,"#172a3a");
+ // Beak
+ ctx.fillStyle="#ff7a25";ctx.beginPath();
+ ctx.moveTo(12,0);ctx.lineTo(25,4);ctx.lineTo(12,8);ctx.closePath();ctx.fill();
+ // Shine
+ circle(-5,-7,4,"#ffffff77");
+ ctx.restore();
+}
+function addPipe(){
+ const gap=Math.max(135,H*.23);
+ const margin=70;
+ const top=margin+Math.random()*(H-gap-margin*2);
+ pipes.push({x:W+20,top,gap,scored:false,coin:false});
+}
+function drawPipe(p){
+ const pw=58;
+ const grad=ctx.createLinearGradient(p.x,0,p.x+pw,0);
+ grad.addColorStop(0,"#208a43");grad.addColorStop(.5,"#63d84c");grad.addColorStop(1,"#167b36");
+ ctx.fillStyle=grad;
+ ctx.fillRect(p.x,0,pw,p.top);
+ ctx.fillRect(p.x,p.top+p.gap,pw,H-p.top-p.gap-24);
+ ctx.fillStyle="#45b63c";
+ ctx.fillRect(p.x-5,p.top-18,pw+10,18);
+ ctx.fillRect(p.x-5,p.top+p.gap,pw+10,18);
+ ctx.strokeStyle="#176c31";ctx.lineWidth=2;
+ ctx.strokeRect(p.x,0,pw,p.top);
+ ctx.strokeRect(p.x,p.top+p.gap,pw,H-p.top-p.gap-24);
+}
+function drawCoin(x,y){
+ circle(x,y,11,"#e9a300");
+ circle(x,y,8,"#ffdf43");
+ ctx.fillStyle="#fff7a3";ctx.font="bold 13px Arial";
+ ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillText("$",x,y+1);
+}
+function collide(p){
+ const r=bird.r-3;
+ const withinX=bird.x+r>p.x&&bird.x-r<p.x+58;
+ return withinX&&(bird.y-r<p.top||bird.y+r>p.top+p.gap);
+}
+function update(dt){
+ frame+=dt;
+ if(!playing)return;
+ bird.vy+=H*.00165*dt;
+ bird.y+=bird.vy*dt;
+ bird.angle=bird.vy*.001;
+ if(frame>85){addPipe();frame=0}
+ for(const p of pipes){
+ p.x-=W*.00034*dt;
+ if(!p.coin&&p.x+29<bird.x+12){
+ p.coin=true;
+ }
+ if(p.coin&&!p.collected){
+ const cx=p.x+29,cy=p.top+p.gap/2;
+ if(Math.hypot(bird.x-cx,bird.y-cy)<27){
+ p.collected=true;coins++;save();updateHud();sound(950,.12);
+ for(let i=0;i<8;i++)particles.push({x:cx,y:cy,vx:(Math.random()-.5)*4,vy:(Math.random()-.5)*4,life:25});
+ }
+ }
+ if(!p.scored&&p.x+58<bird.x){
+ p.scored=true;score++;updateHud();sound(720,.06);
+ }
+ if(collide(p)){endGame();return}
+ }
+ pipes=pipes.filter(p=>p.x>-100);
+ if(bird.y-bird.r<0||bird.y+bird.r>H-24){endGame();return}
+ particles.forEach(p=>{p.x+=p.vx;p.y+=p.vy;p.life--});
+ particles=particles.filter(p=>p.life>0);
+}
+function draw(){
+ drawBackground();
+ for(const p of pipes){
+ drawPipe(p);
+ if(!p.collected)drawCoin(p.x+29,p.top+p.gap/2);
+ }
+ particles.forEach(p=>circle(p.x,p.y,3,"#ffe24a"));
+ if(bird)drawBird();
+ if(!playing&&$("menu").style.display==="none"&&$("shop").style.display!=="flex"){
+ ctx.fillStyle="#ffffffcc";ctx.font="bold 22px Arial";ctx.textAlign="center";
+ ctx.fillText("Tap to fly!",W/2,H*.45);
+ }
+}
+function loop(now){
+ const dt=Math.min(2,(now-lastTime)/16.67||1);
+ lastTime=now;
+ update(dt);draw();
+ requestAnimationFrame(loop);
+}
+reset();updateHud();requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
