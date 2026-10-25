@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Sky Coin Bird</title>
+<style>
+:root{--ink:#10233d;--panel:#ffffffed;--accent:#ffb703;--blue:#219ebc}
+*{box-sizing:border-box} body{margin:0;font-family:system-ui,-apple-system,Segoe UI,sans-serif;background:#8ecae6;color:var(--ink);overflow:hidden;touch-action:manipulation}
+#game{position:fixed;inset:0;width:100%;height:100%;display:block}
+.hud{position:fixed;inset:0;pointer-events:none;padding:14px;display:flex;flex-direction:column;justify-content:space-between}
+.top{display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
+.pill{background:#ffffffdc;border:2px solid #ffffff80;border-radius:16px;padding:8px 12px;font-weight:800;box-shadow:0 3px 0 #00000012}
+.score{font-size:28px;text-align:center;color:white;text-shadow:0 3px 2px #0008;font-weight:1000}
+.bottom{display:flex;justify-content:center;gap:10px;pointer-events:auto}
+button{font:inherit;font-weight:800;border:0;border-radius:14px;padding:11px 15px;background:var(--accent);color:#3b2a00;box-shadow:0 4px 0 #c17e00;cursor:pointer}
+button.secondary{background:white;color:var(--ink);box-shadow:0 4px 0 #c7d5df}
+.overlay{position:fixed;inset:0;background:#0b254055;display:flex;align-items:center;justify-content:center;padding:18px}
+.panel{width:min(440px,100%);max-height:88dvh;overflow:auto;background:var(--panel);border:3px solid #ffffffa8;border-radius:24px;padding:20px;text-align:center;box-shadow:0 15px 45px #17324b44}
+h1{margin:0 0 6px;font-size:30px} p{margin:8px 0 16px;line-height:1.4}
+.actions{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+.hidden{display:none!important}
+.skin-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:14px 0}
+.skin{border:2px solid #dce7ef;border-radius:16px;padding:12px 8px;background:#fff}
+.skin.selected{border-color:#219ebc;background:#e7f8ff}
+.skin .emoji{font-size:36px;display:block}.skin small{display:block;color:#526579;margin:4px 0 8px}
+.skin button{width:100%;padding:8px 6px;font-size:14px}
+.note{font-size:12px;color:#526579}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div class="hud">
+  <div class="top">
+    <div class="pill">🪙 <span id="coins">0</span></div>
+    <div class="pill">🏆 Best: <span id="best">0</span></div>
+  </div>
+  <div class="score" id="score">0</div>
+  <div class="bottom">
+    <button class="secondary" id="shopBtn">🛍️ Skins</button>
+    <button class="secondary" id="soundBtn">🔊 Sound: Off</button>
+    <button id="pauseBtn">⏸ Pause</button>
+  </div>
+</div>
+
+<div class="overlay" id="home">
+ <div class="panel">
+  <h1>🐤 Sky Coin Bird</h1>
+  <p>Tap to flap, dodge the pipes, collect coins, and unlock new bird skins!</p>
+  <div class="actions"><button id="playBtn">▶ Play</button><button class="secondary" id="homeShopBtn">🛍️ Skin Shop</button></div>
+  <p class="note">Tip: Tap the screen or press Space to flap. Coins and skins save on this device.</p>
+ </div>
+</div>
+
+<div class="overlay hidden" id="shop">
+ <div class="panel">
+  <h1>🛍️ Bird Skin Shop</h1>
+  <p>Balance: 🪙 <b id="shopCoins">0</b></p>
+  <div class="skin-grid" id="skinGrid"></div>
+  <div class="actions"><button class="secondary" id="closeShop">Back</button></div>
+  <p class="note">Coins are earned during gameplay. This demo uses virtual coins only; no real-money purchases or ads are connected.</p>
+ </div>
+</div>
+
+<div class="overlay hidden" id="end">
+ <div class="panel">
+  <h1 id="endTitle">Game Over!</h1>
+  <p>You scored <b id="finalScore">0</b> and collected 🪙 <b id="runCoins">0</b>.</p>
+  <div class="actions"><button id="againBtn">↻ Play Again</button><button class="secondary" id="endShopBtn">🛍️ Skins</button><button class="secondary" id="homeBtn">Home</button></div>
+ </div>
+</div>
+
+<div class="overlay hidden" id="pause">
+ <div class="panel"><h1>⏸ Paused</h1><p>Ready when you are.</p><div class="actions"><button id="resumeBtn">Resume</button><button class="secondary" id="pauseHomeBtn">Home</button></div></div>
+</div>
+<script>
+(() => {
+const $ = id => document.getElementById(id);
+const canvas = $('game'), ctx = canvas.getContext('2d');
+const skins = [
+ {id:'yellow',name:'Sunny',emoji:'🐤',cost:0,color:'#ffca3a'},
+ {id:'blue',name:'Blue Jay',emoji:'🐦',cost:25,color:'#4cc9f0'},
+ {id:'chick',name:'Tiny Chick',emoji:'🐥',cost:50,color:'#ffd166'},
+ {id:'owl',name:'Wise Owl',emoji:'🦉',cost:90,color:'#9b5de5'},
+ {id:'penguin',name:'Penguin',emoji:'🐧',cost:140,color:'#4361ee'},
+ {id:'fox',name:'Fire Fox',emoji:'🦊',cost:220,color:'#f77f00'},
+ {id:'robot',name:'Robot Bird',emoji:'🤖',cost:320,color:'#8d99ae'},
+ {id:'dragon',name:'Mini Dragon',emoji:'🐲',cost:500,color:'#2a9d8f'}
+];
+const defaults = {coins:0,best:0,unlocked:['yellow'],selected:'yellow',sound:false};
+let data;
+try { data = {...defaults,...JSON.parse(localStorage.getItem('skyCoinBirdSave')||'{}')}; }
+catch { data = {...defaults}; }
+data.unlocked = Array.isArray(data.unlocked) ? data.unlocked : ['yellow'];
+if (!data.unlocked.includes('yellow')) data.unlocked.push('yellow');
+if (!skins.some(s=>s.id===data.selected) || !data.unlocked.includes(data.selected)) data.selected='yellow';
+const save=()=>{try{localStorage.setItem('skyCoinBirdSave',JSON.stringify(data));}catch{};updateHud();};
+function updateHud(){ $('coins').textContent=data.coins; $('best').textContent=data.best; $('shopCoins').textContent=data.coins; $('soundBtn').textContent=data.sound?'🔊 Sound: On':'🔇 Sound: Off';}
+let W=0,H=0,dpr=1, bird, pipes, pickups, frame=0, score=0, runCoins=0, state='home', last=0, spawn=0, clouds=[];
+let audioCtx=null;
+function tone(freq=440,duration=0.08,type='sine',volume=0.045,slide=0){
+ if(!data.sound)return;
+ try{audioCtx=audioCtx||new (window.AudioContext||window.webkitAudioContext)();if(audioCtx.state==='suspended')audioCtx.resume();const o=audioCtx.createOscillator(),g=audioCtx.createGain();o.type=type;o.frequency.setValueAtTime(freq,audioCtx.currentTime);if(slide)o.frequency.linearRampToValueAtTime(Math.max(40,freq+slide),audioCtx.currentTime+duration);g.gain.setValueAtTime(volume,audioCtx.currentTime);g.gain.exponentialRampToValueAtTime(0.001,audioCtx.currentTime+duration);o.connect(g);g.connect(audioCtx.destination);o.start();o.stop(audioCtx.currentTime+duration);}catch(e){}
+}
+function soundFlap(){tone(520,0.07,'triangle',0.035,220)}
+function soundCoin(){tone(880,0.07,'sine',0.05,180);setTimeout(()=>tone(1180,0.09,'sine',0.035,80),55)}
+function soundScore(){tone(660,0.08,'square',0.025,160)}
+function soundCrash(){tone(240,0.18,'sawtooth',0.04,-150)}
+function soundBuy(){tone(620,0.08,'triangle',0.04,200);setTimeout(()=>tone(900,0.1,'triangle',0.04,160),75)}
+function resize(){
+ dpr=Math.min(devicePixelRatio||1,2); W=innerWidth;H=innerHeight;
+ canvas.width=Math.round(W*dpr);canvas.height=Math.round(H*dpr);canvas.style.width=W+'px';canvas.style.height=H+'px';ctx.setTransform(dpr,0,0,dpr,0,0);
+ clouds=Array.from({length:6},(_,i)=>({x:(i*173)%W,y:40+(i*71)%(H*.45),s:.6+(i%4)*.18}));
+ if(!bird) reset();
+}
+addEventListener('resize',resize);
+const groundH=()=>Math.max(70,H*.12);
+function reset(){bird={x:W*.28,y:H*.42,vy:0,r:17};pipes=[];pickups=[];frame=0;score=0;runCoins=0;spawn=0;$('score').textContent='0';}
+function flap(){if(state==='playing'){bird.vy=-H*.48;soundFlap();}}
+function start(){reset();state='playing';hideAll();tone(600,0.08,'triangle',0.025,180);}
+function show(id){$(id).classList.remove('hidden');}
+function hide(id){$(id).classList.add('hidden');}
+function hideAll(){['home','shop','end','pause'].forEach(hide);}
+function openShop(){const previous=state; if(state==='playing') state='pausedShop'; renderShop();hideAll();show('shop');}
+function closeShop(){hide('shop'); if(state==='pausedShop')state='playing'; else if(state==='home')show('home'); else if(state==='over')show('end');}
+function renderShop(){
+ $('shopCoins').textContent=data.coins;
+ $('skinGrid').innerHTML='';
+ skins.forEach(s=>{
+  const unlocked=data.unlocked.includes(s.id), selected=data.selected===s.id;
+  const card=document.createElement('div');card.className='skin'+(selected?' selected':'');
+  const emoji=document.createElement('span');emoji.className='emoji';emoji.textContent=s.emoji;
+  const name=document.createElement('b');name.textContent=s.name;
+  const cost=document.createElement('small');cost.textContent=s.cost===0?'Free':'🪙 '+s.cost+' coins';
+  const btn=document.createElement('button');btn.textContent=selected?'Selected':unlocked?'Equip':`Unlock · ${s.cost} 🪙`;btn.disabled=selected;
+  if(unlocked&&!selected)btn.onclick=()=>{data.selected=s.id;save();renderShop();};
+  else if(!unlocked)btn.onclick=()=>{if(data.coins<s.cost){btn.textContent='Need more coins!';return;}data.coins-=s.cost;data.unlocked.push(s.id);data.selected=s.id;soundBuy();save();renderShop();};
+  card.append(emoji,name,cost,btn);$('skinGrid').append(card);
+ });
+}
+function gameOver(){
+ if(state!=='playing')return;
+ state='over';soundCrash();data.best=Math.max(data.best,score);save();
+ $('finalScore').textContent=score;$('runCoins').textContent=runCoins;$('endTitle').textContent=score===0?'Try Again!':'Great Flight!';
+ show('end');
+}
+function addCoin(x,y){pickups.push({x,y,r:11,taken:false});}
+function update(dt){
+ if(state!=='playing')return;
+ frame+=dt;bird.vy+=H*1.45*dt;bird.y+=bird.vy*dt;
+ spawn+=dt;
+ const gap=Math.max(142,H*.25), pipeW=66, speed=Math.max(145,W*.42);
+ if(spawn>1.45){spawn=0;const margin=groundH()+gap*.6+20;const center=margin+Math.random()*(H-margin*2);pipes.push({x:W+20,w:pipeW,top:center-gap/2,bottom:center+gap/2,passed:false});if(Math.random()<.85)addCoin(W+pipeW+15,center+(Math.random()-.5)*gap*.5);}
+ pipes.forEach(p=>{p.x-=speed*dt;if(!p.passed&&p.x+p.w<bird.x){p.passed=true;score++;soundScore();$('score').textContent=score;}});
+ pipes=pipes.filter(p=>p.x+p.w>-10);
+ pickups.forEach(c=>{c.x-=speed*dt;if(!c.taken&&Math.hypot(c.x-bird.x,c.y-bird.y)<bird.r+c.r){c.taken=true;runCoins++;data.coins++;soundCoin();save();}});
+ pickups=pickups.filter(c=>c.x>-20&&!c.taken);
+ const ground=H-groundH();
+ if(bird.y-bird.r<0||bird.y+bird.r>ground){gameOver();return;}
+ for(const p of pipes){if(bird.x+bird.r>p.x&&bird.x-bird.r<p.x+p.w&&(bird.y-bird.r<p.top||bird.y+bird.r>p.bottom)){gameOver();return;}}
+}
+function draw(){
+ ctx.clearRect(0,0,W,H);
+ const sky=ctx.createLinearGradient(0,0,0,H);sky.addColorStop(0,'#70d6ff');sky.addColorStop(1,'#caf0f8');ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+ ctx.fillStyle='#ffffffa8';clouds.forEach((c,i)=>{const x=((c.x-frame*10*c.s)%(W+100)+W+100)%(W+100)-40;ctx.beginPath();ctx.ellipse(x,c.y,28*c.s,12*c.s,0,0,Math.PI*2);ctx.ellipse(x+20*c.s,c.y-8*c.s,20*c.s,15*c.s,0,0,Math.PI*2);ctx.ellipse(x+39*c.s,c.y,24*c.s,11*c.s,0,0,Math.PI*2);ctx.fill();});
+ const ground=H-groundH();
+ // Glossy pipes with a bright highlight and a dark shaded edge
+ pipes.forEach(p=>{
+  const pipeGrad=ctx.createLinearGradient(p.x,0,p.x+p.w,0);
+  pipeGrad.addColorStop(0,'#176b2a');pipeGrad.addColorStop(.16,'#35b84a');pipeGrad.addColorStop(.38,'#8df06c');pipeGrad.addColorStop(.56,'#3ebc42');pipeGrad.addColorStop(.82,'#168137');pipeGrad.addColorStop(1,'#084f25');
+  const capGrad=ctx.createLinearGradient(p.x-5,0,p.x+p.w+5,0);
+  capGrad.addColorStop(0,'#145b28');capGrad.addColorStop(.18,'#40c852');capGrad.addColorStop(.42,'#a1f477');capGrad.addColorStop(.68,'#31a93c');capGrad.addColorStop(1,'#064b20');
+  ctx.lineWidth=3;ctx.strokeStyle='#104e26';ctx.fillStyle=pipeGrad;
+  ctx.fillRect(p.x,0,p.w,p.top);ctx.strokeRect(p.x,0,p.w,p.top);
+  ctx.fillRect(p.x,p.bottom,p.w,ground-p.bottom);ctx.strokeRect(p.x,p.bottom,p.w,ground-p.bottom);
+  ctx.fillStyle=capGrad;ctx.fillRect(p.x-5,p.top-20,p.w+10,20);ctx.strokeRect(p.x-5,p.top-20,p.w+10,20);
+  ctx.fillRect(p.x-5,p.bottom,p.w+10,20);ctx.strokeRect(p.x-5,p.bottom,p.w+10,20);
+  // reflective stripe and soft inner shadow
+  ctx.fillStyle='#d7ff9a99';ctx.fillRect(p.x+9,0,5,p.top);ctx.fillRect(p.x+9,p.bottom,5,ground-p.bottom);
+  ctx.fillStyle='#003d1c55';ctx.fillRect(p.x+p.w-8,0,5,p.top);ctx.fillRect(p.x+p.w-8,p.bottom,5,ground-p.bottom);
+  ctx.fillStyle='#d7ff9a99';ctx.fillRect(p.x+5,p.top-15,4,10);ctx.fillRect(p.x+5,p.bottom+4,4,10);
+ });
+ pickups.forEach(c=>{if(c.taken)return;ctx.save();ctx.translate(c.x,c.y);ctx.fillStyle='#ffca3a';ctx.strokeStyle='#b77900';ctx.lineWidth=3;ctx.beginPath();ctx.arc(0,0,c.r,0,Math.PI*2);ctx.fill();ctx.stroke();ctx.fillStyle='#fff1a8';ctx.font='bold 13px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('$',0,1);ctx.restore();});
+ ctx.fillStyle='#d9ed92';ctx.fillRect(0,ground,W,groundH());ctx.fillStyle='#80b918';ctx.fillRect(0,ground,W,9);
+ if(bird){
+  const skin=skins.find(s=>s.id===data.selected)||skins[0];ctx.save();ctx.translate(bird.x,bird.y);ctx.rotate(Math.max(-.4,Math.min(.7,bird.vy/H*.8)));
+  // Draw an actual bird silhouette; coins remain separate collectibles.
+  ctx.lineWidth=2.5;ctx.strokeStyle='#17446b';
+  const bodyGrad=ctx.createLinearGradient(-bird.r,-bird.r,bird.r,bird.r);bodyGrad.addColorStop(0,'#ffffff');bodyGrad.addColorStop(.28,skin.color);bodyGrad.addColorStop(1,skin.color);
+  ctx.fillStyle=bodyGrad;ctx.beginPath();ctx.ellipse(0,0,19,15,0,0,Math.PI*2);ctx.fill();ctx.stroke();
+  // wing
+  ctx.fillStyle=skin.color;ctx.beginPath();ctx.ellipse(-7,3,10,6,-.35,0,Math.PI*2);ctx.fill();ctx.stroke();
+  ctx.strokeStyle='#17446b';ctx.lineWidth=2;ctx.fillStyle='#ff8c42';ctx.beginPath();ctx.moveTo(15,-2);ctx.lineTo(26,2);ctx.lineTo(15,6);ctx.closePath();ctx.fill();ctx.stroke();
+  // cream belly
+  ctx.fillStyle='#fff0c2';ctx.beginPath();ctx.ellipse(4,8,9,5,.1,0,Math.PI);ctx.fill();
+  // eye and highlight
+  ctx.fillStyle='#ffffff';ctx.beginPath();ctx.arc(7,-6,6,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#17324d';ctx.stroke();
+  ctx.fillStyle='#132238';ctx.beginPath();ctx.arc(9,-6,2.7,0,Math.PI*2);ctx.fill();ctx.fillStyle='#ffffff';ctx.beginPath();ctx.arc(10,-7,1,0,Math.PI*2);ctx.fill();
+  ctx.restore();}
+ if(state==='home'){ctx.fillStyle='#17324d';ctx.font='bold 17px system-ui';ctx.textAlign='center';ctx.fillText('Tap PLAY to start',W/2,H*.67);}
+ if(state==='playing'&&frame<2){ctx.fillStyle='#17324d';ctx.font='bold 16px system-ui';ctx.textAlign='center';ctx.fillText('TAP TO FLAP',W/2,H*.68);}
+ requestAnimationFrame(draw);
+}
+function loop(t){const dt=Math.min((t-last)/1000||0,.035);last=t;update(dt);requestAnimationFrame(loop);}
+canvas.addEventListener('pointerdown',()=>{if(state==='playing')flap();});
+addEventListener('keydown',e=>{if(e.code==='Space'||e.code==='ArrowUp'){e.preventDefault();flap();}});
+$('playBtn').onclick=start;$('againBtn').onclick=start;
+$('shopBtn').onclick=openShop;$('homeShopBtn').onclick=()=>{state='home';openShop();};
+$('closeShop').onclick=closeShop;
+$('pauseBtn').onclick=()=>{if(state==='playing'){state='paused';show('pause');}};
+$('resumeBtn').onclick=()=>{state='playing';hide('pause');};
+$('pauseHomeBtn').onclick=()=>{state='home';hide('pause');show('home');};
+$('endShopBtn').onclick=()=>{state='over';openShop();};
+$('homeBtn').onclick=()=>{state='home';hide('end');show('home');};
+$('soundBtn').onclick=()=>{data.sound=!data.sound;if(data.sound){try{audioCtx=audioCtx||new (window.AudioContext||window.webkitAudioContext)();audioCtx.resume();tone(740,0.09,'sine',0.03,120);}catch(e){}}save();};
+updateHud();resize();reset();show('home');requestAnimationFrame(draw);requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
